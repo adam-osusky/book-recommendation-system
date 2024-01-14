@@ -1,0 +1,20 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PEP 582
+__pypackages__/
+
+# Environments
+env/
+
+# My own
+testing/
+data/og-dataset
+
+# IDE
+.vscode
