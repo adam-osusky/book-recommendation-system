@@ -15,6 +15,7 @@ env/
 # My own
 testing/
 data/og-dataset
+data/book-feedback.csv
 
 # IDE
 .vscode
