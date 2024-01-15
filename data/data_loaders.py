@@ -77,6 +77,13 @@ class BooksDataset(Dataset):
             )[0]  # type: ignore
             sample["pos_book_features"] = self.book_oh.transform(
                 self.book_feats[idx, None]
+            )[0]  # type: ignore
+            sample["neg_book_features"] = self.book_oh.transform(neg_book_feat)
+
+        if self.rating_target:
+            sample["rating"] = self.ratings[idx]
+
+        return sample
 
     def get_oh(self) -> None:
         self.user_oh = OneHotEncoder(
@@ -99,13 +106,15 @@ class BooksDataset(Dataset):
         # book_id = random.choice(list(self.all_books - self.user_rated_books[user_id]))  NOTE: this line was a huge bottleneck
         done = False
         while not done:
-            book_id = random.randint(0, self.num_books-1)
+            book_id = random.randint(0, self.num_books - 1)
             if book_id not in self.user_rated_books[user_id]:
                 done = True
 
         book_feat = None
         if self.use_feats:
-            book_feat = self.book_features_dict.get(book_id, {0: "", 1: "", 2: "", 3:""})
+            book_feat = self.book_features_dict.get(
+                book_id, {0: "", 1: "", 2: "", 3: ""}
+            )
             book_feat = np.array([list(book_feat.values())])
         return book_id, book_feat
 
