@@ -120,7 +120,7 @@ class BooksDataset(Dataset):
 
 
 def train_val_test_split(
-    df: pd.DataFrame, test_size: float = 0.1, val_size: float = 0.05, seed=69
+    df: pd.DataFrame, test_size: float = 0.05, val_size: float = 0.05, seed=69
 ) -> tuple[Any, Any, Any]:
     train_df, test_df = train_test_split(
         df, test_size=test_size, stratify=df["user_id"], random_state=seed
@@ -136,13 +136,16 @@ class BookData:
     dls: tuple[DataLoader, ...]
     num_users: int
     num_books: int
+    df_train: pd.DataFrame
+    df_val: pd.DataFrame
+    df_test: pd.DataFrame
 
 
 def get_books_data(
     book_ds: str = "./data/book-feedback.csv",
     use_feats=False,
     batch_size=32,
-    test_size: float = 0.1,
+    test_size: float = 0.05,
     val_size: float = 0.05,
     num_workers=0,
     seed: int = 69,
@@ -175,5 +178,8 @@ def get_books_data(
         dls=data_loaders,
         num_users=df["user_id"].nunique(),
         num_books=num_books,
+        df_train=train_df,
+        df_val=val_df,
+        df_test=test_df,
     )
     return data
