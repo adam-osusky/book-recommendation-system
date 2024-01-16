@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import numpy as np
@@ -25,6 +25,14 @@ class BPRLoss(nn.Module):
         loss = -torch.sum(torch.log(torch.sigmoid(distances)), dim=0, keepdim=True)
         return loss
 
+class HingeLossRec(nn.Module):
+    def __init__(self, weight=None, batch_axis=0, **kwargs):
+        super(HingeLossRec, self).__init__()
+
+    def forward(self, positive, negative, margin=0.5):
+        distances = positive - negative
+        loss = torch.sum(torch.maximum(-distances + margin, torch.tensor(0.0)))
+        return loss
 
 class MF(LightningModule):
     def __init__(
@@ -128,8 +136,126 @@ class MF(LightningModule):
         return books[top_indices]
 
 
+class DeepMF(LightningModule):
+    def __init__(
+        self,
+        latent_dim: int,
+        num_users: int,
+        num_items: int,
+        loss: Literal["BCE", "BPR", "Hinge"] = "BCE",
+        lr: float = 1e-3,
+        wd: float = 1e-5,
+        hidden_layers: list[int] = field(default_factory=list),
+        *args,
+        **kwargs,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.U = nn.Embedding(num_embeddings=num_users, embedding_dim=latent_dim)
+        self.I = nn.Embedding(num_embeddings=num_items, embedding_dim=latent_dim)
+        self.mlp_U = nn.Embedding(num_embeddings=num_users, embedding_dim=latent_dim)
+        self.mlp_I = nn.Embedding(num_embeddings=num_items, embedding_dim=latent_dim)
+        mlp = []
+        hidden_layers = [2*latent_dim] + hidden_layers
+        for i in range(1, len(hidden_layers)):
+            mlp.append(nn.Linear(hidden_layers[i-1], hidden_layers[i]))
+            mlp.append(nn.ReLU())
+            mlp.append(nn.Dropout())
+        self.mlp = nn.Sequential(*mlp)
+        self.prediction_layer = nn.Linear(hidden_layers[-1] + latent_dim, 1)
+        self.sigmoid = nn.Sigmoid()
+
+        self.lr = lr
+        self.accuracy = BinaryAccuracy()
+        self.loss = loss
+        self.wd = wd
+
+        self.save_hyperparameters()
+
+    def forward(self, sample: dict[str, torch.Tensor]) -> torch.Tensor:
+        U = self.U(sample["user_id"])
+        mlp_U = self.mlp_U(sample["user_id"])
+
+        preds = []
+        for prefix in ["pos", "neg"]:
+            I = self.I(sample[f"{prefix}_book_id"])
+            gmf = U * I
+            mlp_I = self.mlp_I(sample[f"{prefix}_book_id"])
+            mlp = self.mlp(torch.cat([mlp_U, mlp_I], dim=1))
+            con_res = torch.cat([gmf, mlp], dim=1)
+            pred = self.prediction_layer(con_res)
+            preds.append(self.sigmoid(pred))
+
+        pred = torch.cat([preds[0], preds[1]], dim=0)
+
+        return pred
+
+    def inference(self, sample):
+        U = self.U(sample["user_id"])
+        mlp_U = self.mlp_U(sample["user_id"])
+
+        I = self.I(sample["book_id"])
+        gmf = U * I
+        mlp_I = self.mlp_I(sample["book_id"])
+        mlp = self.mlp(torch.cat([mlp_U.repeat(mlp_I.shape[0], 1), mlp_I], dim=1))
+        con_res = torch.cat([gmf, mlp], dim=1)
+        pred = self.prediction_layer(con_res)
+        pred = self.sigmoid(pred)
+
+        return pred
+    
+    def recommend(self, user_id: int, books, k: int = 10):
+        sample = {
+            "user_id": torch.tensor([user_id], dtype=torch.long),
+            "book_id": torch.tensor(books, dtype=torch.long),
+        }
+
+        preds = self.inference(sample=sample)
+        _, top_indices = torch.topk(preds, k=k, dim=0)
+
+        return books[top_indices].squeeze()
+    
+    def training_step(self, batch, batch_idx):
+        pred = self(batch)
+        batch_size = pred.shape[0] // 2
+        target = torch.cat(
+            [torch.ones_like(pred[:batch_size]), torch.zeros_like(pred[batch_size:])]
+        )
+        if self.loss == "BCE":
+            loss = nn.BCELoss()(pred, target)
+        elif self.loss == "BPR":
+            loss = BPRLoss()(pred[:batch_size], pred[batch_size:])
+        else:
+            loss = HingeLossRec()(pred[:batch_size], pred[batch_size:])
+
+        self.log("train_loss", loss, prog_bar=True)
+
+        acc = self.accuracy(pred, target)
+        self.log("train_acc", acc, prog_bar=True)
+
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        pred = self(batch)
+        batch_size = pred.shape[0] // 2
+        target = torch.cat(
+            [torch.ones_like(pred[:batch_size]), torch.zeros_like(pred[batch_size:])]
+        )
+        val_loss = nn.BCELoss()(pred, target)
+        self.log("val_loss", val_loss, prog_bar=True)
+
+        acc = self.accuracy(pred, target)
+        self.log("val_acc", acc, prog_bar=True)
+
+        return val_loss
+
+    def configure_optimizers(self) -> AdamW:
+        return AdamW(params=self.parameters(), lr=self.lr, weight_decay=self.wd)
+
+
 @dataclass
 class MFJob(ConfigurableJob):
+    model: Literal["MF", "DeepMF"] = "MF"
+    hidden_layers: list[int] = field(default_factory=list)
     lr: float = 1e-3
     batch_size: int = 32
     latent_dim: int = 16
@@ -139,7 +265,7 @@ class MFJob(ConfigurableJob):
     seed: int = 69
     test_size: float = 0.05
     val_size: float = 0.05
-    loss: Literal["BCE", "BPR"] = "BCE"
+    loss: Literal["BCE", "BPR", "Hinge"] = "BCE"
     wd: float = 1e-5
 
     k: int = 10
@@ -169,13 +295,18 @@ class MFJob(ConfigurableJob):
         train_dl, val_dl, _ = data.dls
 
         logger.info("Initializing the model and trainer.")
-        model = MF(
+        models = {
+            "MF": (MF, {}),
+            "DeepMF": (DeepMF, {"hidden_layers": self.hidden_layers}),
+        }
+        model = models[self.model][0](
             latent_dim=self.latent_dim,
             num_users=data.num_users,
             num_items=data.num_books,
             lr=self.lr,
             loss=self.loss,
             wd=self.wd,
+            **models[self.model][1],
         )
         checkpoint_callback = ModelCheckpoint(
             dirpath=os.path.join(log_dir, "checkpoints"),
