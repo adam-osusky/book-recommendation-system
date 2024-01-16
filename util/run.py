@@ -1,11 +1,13 @@
 import json
 import sys
 
+from models.corr_baseline import CorrBaselineJob
 from models.matrix_factorization import MFJob
 from util.job import ConfigurableJob
 
 job_classes: dict[str, type[ConfigurableJob]] = {
     "MFJob": MFJob,
+    "CorrBaselineJob": CorrBaselineJob,
 }
 
 if __name__ == "__main__":
