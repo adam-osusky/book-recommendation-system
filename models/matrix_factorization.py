@@ -1,8 +1,8 @@
-from dataclasses import dataclass
 import os
+from dataclasses import dataclass
 from typing import Literal
-import numpy as np
 
+import numpy as np
 import torch
 import torch.nn as nn
 from pytorch_lightning import LightningModule, Trainer, seed_everything
@@ -11,9 +11,9 @@ from torch.optim import AdamW
 from torchmetrics.classification import BinaryAccuracy
 
 from data.data_loaders import get_books_data
+from data.eval import BookEvaluator
 from util.job import ConfigurableJob
 from util.logger import get_logger
-from data.eval import BookEvaluator, Recommender
 
 
 class BPRLoss(nn.Module):
@@ -175,7 +175,7 @@ class MFJob(ConfigurableJob):
             num_items=data.num_books,
             lr=self.lr,
             loss=self.loss,
-            wd=self.wd
+            wd=self.wd,
         )
         checkpoint_callback = ModelCheckpoint(
             dirpath=os.path.join(log_dir, "checkpoints"),

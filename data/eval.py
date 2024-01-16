@@ -35,7 +35,9 @@ class BookEvaluator:
         non_interacted = self.all - set(interacted)
 
         if pool_size > 0:
-            non_interacted = random.sample(sorted(non_interacted), k=pool_size)
+            non_interacted = random.sample(
+                sorted(non_interacted), k=min(pool_size, len(non_interacted))
+            )
 
         return non_interacted
 
