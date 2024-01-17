@@ -25,6 +25,7 @@ class BPRLoss(nn.Module):
         loss = -torch.sum(torch.log(torch.sigmoid(distances)), dim=0, keepdim=True)
         return loss
 
+
 class HingeLossRec(nn.Module):
     def __init__(self, weight=None, batch_axis=0, **kwargs):
         super(HingeLossRec, self).__init__()
@@ -33,6 +34,7 @@ class HingeLossRec(nn.Module):
         distances = positive - negative
         loss = torch.sum(torch.maximum(-distances + margin, torch.tensor(0.0)))
         return loss
+
 
 class MF(LightningModule):
     def __init__(
@@ -55,6 +57,7 @@ class MF(LightningModule):
         self.accuracy = BinaryAccuracy()
         self.loss = loss
         self.wd = wd
+        self.dropout = nn.Dropout()
         self.save_hyperparameters()
 
     def forward(self, sample: dict[str, torch.Tensor]) -> torch.Tensor:
@@ -66,6 +69,10 @@ class MF(LightningModule):
 
         I_neg = self.I(sample["neg_book_id"])
         b_i_neg = self.item_bias(sample["neg_book_id"])
+
+        U = self.dropout(U)
+        I_pos = self.dropout(I_pos)
+        I_neg = self.dropout(I_neg)
 
         pos = torch.sum(U * I_pos, dim=1) + torch.squeeze(b_u) + torch.squeeze(b_i_pos)
         pos = torch.sigmoid(pos)
@@ -119,6 +126,9 @@ class MF(LightningModule):
         It = self.I(sample["book_id"])
         b_i = self.item_bias(sample["book_id"])
 
+        U = self.dropout(U)
+        It = self.dropout(It)
+
         pred = torch.sum(U * It, dim=1) + torch.squeeze(b_u) + torch.squeeze(b_i)
         pred = torch.sigmoid(pred)
 
@@ -155,9 +165,9 @@ class DeepMF(LightningModule):
         self.mlp_U = nn.Embedding(num_embeddings=num_users, embedding_dim=latent_dim)
         self.mlp_I = nn.Embedding(num_embeddings=num_items, embedding_dim=latent_dim)
         mlp = []
-        hidden_layers = [2*latent_dim] + hidden_layers
+        hidden_layers = [2 * latent_dim] + hidden_layers
         for i in range(1, len(hidden_layers)):
-            mlp.append(nn.Linear(hidden_layers[i-1], hidden_layers[i]))
+            mlp.append(nn.Linear(hidden_layers[i - 1], hidden_layers[i]))
             mlp.append(nn.ReLU())
             mlp.append(nn.Dropout())
         self.mlp = nn.Sequential(*mlp)
@@ -168,18 +178,23 @@ class DeepMF(LightningModule):
         self.accuracy = BinaryAccuracy()
         self.loss = loss
         self.wd = wd
+        self.dropout = nn.Dropout()
 
         self.save_hyperparameters()
 
     def forward(self, sample: dict[str, torch.Tensor]) -> torch.Tensor:
         U = self.U(sample["user_id"])
         mlp_U = self.mlp_U(sample["user_id"])
+        U = self.dropout(U)
+        mlp_U = self.dropout(mlp_U)
 
         preds = []
         for prefix in ["pos", "neg"]:
             I = self.I(sample[f"{prefix}_book_id"])
+            I = self.dropout(I)
             gmf = U * I
             mlp_I = self.mlp_I(sample[f"{prefix}_book_id"])
+            mlp_I = self.dropout(mlp_I)
             mlp = self.mlp(torch.cat([mlp_U, mlp_I], dim=1))
             con_res = torch.cat([gmf, mlp], dim=1)
             pred = self.prediction_layer(con_res)
@@ -191,18 +206,22 @@ class DeepMF(LightningModule):
 
     def inference(self, sample):
         U = self.U(sample["user_id"])
+        U = self.dropout(U)
         mlp_U = self.mlp_U(sample["user_id"])
+        mlp_U = self.dropout(mlp_U)
 
         I = self.I(sample["book_id"])
+        I = self.dropout(I)
         gmf = U * I
         mlp_I = self.mlp_I(sample["book_id"])
+        mlp_I = self.dropout(mlp_I)
         mlp = self.mlp(torch.cat([mlp_U.repeat(mlp_I.shape[0], 1), mlp_I], dim=1))
         con_res = torch.cat([gmf, mlp], dim=1)
         pred = self.prediction_layer(con_res)
         pred = self.sigmoid(pred)
 
         return pred
-    
+
     def recommend(self, user_id: int, books, k: int = 10):
         sample = {
             "user_id": torch.tensor([user_id], dtype=torch.long),
@@ -213,7 +232,7 @@ class DeepMF(LightningModule):
         _, top_indices = torch.topk(preds, k=k, dim=0)
 
         return books[top_indices].squeeze()
-    
+
     def training_step(self, batch, batch_idx):
         pred = self(batch)
         batch_size = pred.shape[0] // 2
@@ -308,6 +327,7 @@ class MFJob(ConfigurableJob):
             wd=self.wd,
             **models[self.model][1],
         )
+        print(model)
         checkpoint_callback = ModelCheckpoint(
             dirpath=os.path.join(log_dir, "checkpoints"),
             filename="best_model",
