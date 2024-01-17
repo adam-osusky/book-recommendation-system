@@ -16,7 +16,7 @@ class Recommender(ABC):
 
 class BookEvaluator:
     def __init__(self, df: pd.DataFrame, seed: int = 69) -> None:
-        df = df.head(1000)
+        # df = df.head(5000)
         self.user_interactions = df.set_index("user_id")
         self.df = df
         self.all = set(df["book_id"])
@@ -61,8 +61,9 @@ class BookEvaluator:
 
         books = np.concatenate(
             [
-                np.fromiter(iter=interacted, dtype=int, count=len(interacted)),
+                # np.fromiter(iter=interacted, dtype=int, count=len(interacted)),
                 np.fromiter(iter=not_interacted, dtype=int, count=len(not_interacted)),
+                np.fromiter(iter=interacted, dtype=int, count=len(interacted)),
             ],
             axis=0,
         )
@@ -82,7 +83,9 @@ class BookEvaluator:
         random.seed(self.seed)
         metrics = []
 
-        for user in tqdm(self.user_interactions.index):
+        users_subset = random.sample(list(self.df["user_id"].unique()), k=500)
+
+        for user in tqdm(users_subset):
             metrics.append(
                 self.evaluate_user(model=model, user_id=user, k=k, pool_size=pool_size)
             )
