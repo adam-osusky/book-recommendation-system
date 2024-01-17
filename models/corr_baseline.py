@@ -20,7 +20,7 @@ class CorrBaseline(Recommender):
         )
 
     def recommend(self, user_id: int, books, k=10) -> np.ndarray:
-        user_top = self.get_user_top(user_id, k=k)
+        user_top = self.df[self.df["user_id"] == user_id]["book_id"]
 
         pool = self.interactions
         if books is not None:
@@ -35,12 +35,12 @@ class CorrBaseline(Recommender):
         recommendations = np.array(recommendations)
         return recommendations
 
-    def get_user_top(self, user_id: int, k: int = 10):
-        return list(
-            self.df[self.df["user_id"] == user_id]
-            .sort_values(by="Book-Rating", ascending=False)["book_id"]
-            # .head(k)["book_id"]
-        )
+    # def get_user_top(self, user_id: int, k: int = 10):
+    #     return list(
+    #         self.df[self.df["user_id"] == user_id]
+    #         .sort_values(by="Book-Rating", ascending=False)["book_id"]
+    #         # .head(k)["book_id"]
+    #     )
 
 
 @dataclass
@@ -61,7 +61,7 @@ class CorrBaselineJob(ConfigurableJob):
         )
         log_dir = os.path.join("./logs/cb", self.job_name)
         os.makedirs(log_dir, exist_ok=True)
-        with open(os.path.join(log_dir, "config.yaml"), "w") as f:
+        with open(os.path.join(log_dir, "config.txt"), "w") as f:
             print(self.get_config(), file=f)
 
         logger.info("Loading the dataset.")
@@ -69,6 +69,9 @@ class CorrBaselineJob(ConfigurableJob):
         train, val, test = train_val_test_split(
             df, test_size=self.test_size, val_size=self.val_size
         )
+
+        if self.pool_size < 1:
+            self.pool_size = len(val)
 
         logger.info("Fitting the model.")
         recommender = CorrBaseline(df=train, implicit_value=self.impl_fill_value)
